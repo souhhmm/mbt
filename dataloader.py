@@ -18,6 +18,7 @@ class UCF101Dataset(Dataset):
         with open(os.path.join(split_path, split_file), "r") as f:
             self.video_list = [line.strip().split(" ")[0] for line in f.readlines()]
 
+        # TODO add more randomizations
         self.video_transform = transforms.Compose(
             [
                 transforms.Resize((224, 224)),
@@ -68,6 +69,7 @@ class UCF101Dataset(Dataset):
 
         return torch.stack(frames)  # [num_frames, c, h, w]
 
+    # TODO specaugment
     def _load_audio(self, video_path):
         try:
             audio_array, sample_rate = torchaudio.load(str(video_path))
@@ -96,9 +98,7 @@ class UCF101Dataset(Dataset):
             audio_array = audio_array[:, :target_length]
 
         # create mel spectrogram
-        # win_length = 0.025 * 16000 = 400 samples (25ms)
-        # hop_length = 0.010 * 16000 = 160 samples (10ms)
-        spectogram = torchaudio.transforms.MelSpectrogram(
+        spectrogram = torchaudio.transforms.MelSpectrogram(
             sample_rate=16000,
             n_mels=128,
             n_fft=1024,
@@ -106,20 +106,20 @@ class UCF101Dataset(Dataset):
             hop_length=160,
         )(audio_array)
 
-        spectogram = torchaudio.transforms.AmplitudeToDB()(spectogram)
-        spectogram = spectogram.squeeze(0)  # remove channel dimension
+        spectrogram = torchaudio.transforms.AmplitudeToDB()(spectrogram)
+        spectrogram = spectrogram.squeeze(0)  # remove channel dimension
 
-        if spectogram.shape[1] > 400:
-            spectogram = spectogram[:, :400]
-        elif spectogram.shape[1] < 400:
-            spectogram = torch.nn.functional.pad(
-                spectogram, (0, 400 - spectogram.shape[1])
+        if spectrogram.shape[1] > 400:
+            spectrogram = spectrogram[:, :400]
+        elif spectrogram.shape[1] < 400:
+            spectrogram = torch.nn.functional.pad(
+                spectrogram, (0, 400 - spectrogram.shape[1])
             )
 
         # mean=0 std=0.5 according to ast
-        spectogram = (spectogram - spectogram.mean()) / (spectogram.std() + 1e-6) * 0.5
+        spectrogram = (spectrogram - spectrogram.mean()) / (spectrogram.std() + 1e-6) * 0.5
 
-        return spectogram.unsqueeze(0)  # add channel dimension back [1, 128, 100*t]
+        return spectrogram.unsqueeze(0)  # add channel dimension back [1, 128, 100*t]
 
     def __getitem__(self, idx):
         video_name = self.video_list[idx]

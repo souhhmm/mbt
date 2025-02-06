@@ -60,6 +60,7 @@ class Model(nn.Module):
             embed_dim=self.va.embed_dim,
         )
 
+        # TODO interpolate original ViT pos embeds
         num_patches = self.va.patch_embed.num_patches
         self.va.pos_embed = nn.Parameter(
             torch.zeros(1, num_patches + 1, self.va.embed_dim)

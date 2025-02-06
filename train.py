@@ -137,7 +137,7 @@ class Trainer:
 
 def train(model, train_loader, val_loader, num_epochs=10, device="cuda"):
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3, momentum=0.9, weight_decay=1e-4)
     trainer = Trainer(model, train_loader, val_loader, criterion, optimizer, device)
 
     for epoch in range(num_epochs):

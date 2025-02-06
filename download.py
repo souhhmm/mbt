@@ -35,7 +35,7 @@ def main():
     
     print("downloading ast...")
     os.makedirs('pretrained_weights', exist_ok=True)
-    wget.download('https://www.dropbox.com/s/cv4knew8mvbrnvq/audioset_10_10_0.4593.pth?dl=1', os.path.join('pretrained_weights', 'audioset_10_10_0.4593.pth'))
+    wget.download('https://www.dropbox.com/s/mdsa4t1xmcimia6/audioset_16_16_0.4422.pth?dl=1', os.path.join('pretrained_weights', 'audioset_16_16_0.4422.pth'))
     print("done")
     
 if __name__ == "__main__":

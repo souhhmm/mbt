@@ -84,5 +84,5 @@ def train(model, train_loader, val_loader, num_epochs=10, device='cuda'):
         train_loss, train_acc = trainer.train_epoch()
         val_loss, val_acc = trainer.validate()
         
-        print(f"train loss: {train_loss:.4f} | train acc: {train_acc:.2f}%")
-        print(f"val loss: {val_loss:.4f} | val acc: {val_acc:.2f}%")
+        print(f"train loss: {train_loss:.4f} | train acc: {train_acc:.2f}")
+        print(f"val loss: {val_loss:.4f} | val acc: {val_acc:.2f}")

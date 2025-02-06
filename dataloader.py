@@ -5,15 +5,14 @@ import torchvision.transforms as transforms
 from PIL import Image
 import torchaudio
 from pathlib import Path
-import numpy as np
 import torchvision.io as io
 
 
 class UCF101Dataset(Dataset):
-    def __init__(self, data_path, split_path, split="train", num_frames=16):
+    def __init__(self, data_path, split_path, split="train", num_frames=8, t=4):
         self.data_path = Path(data_path)
         self.num_frames = num_frames
-
+        self.t = t
         # read split file
         split_file = "trainlist01.txt" if split == "train" else "testlist01.txt"
         with open(os.path.join(split_path, split_file), "r") as f:
@@ -29,14 +28,6 @@ class UCF101Dataset(Dataset):
             ]
         )
 
-        self.audio_transform = transforms.Compose(
-            [
-                transforms.Resize((128, 128)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.5], std=[0.5]),
-            ]
-        )
-
         # create class to index mapping
         self.class_to_idx = {}
         classes = sorted(
@@ -47,35 +38,42 @@ class UCF101Dataset(Dataset):
 
     def _load_video(self, video_path):
         try:
-            vframes, _, _ = io.read_video(str(video_path), pts_unit='sec')
+            vframes, _, _ = io.read_video(str(video_path), pts_unit="sec")
             total_frames = len(vframes)
-            
+
             # ensure we don't sample beyond video length
-            if total_frames < 8:
+            if total_frames < self.num_frames:
                 indices = torch.linspace(0, total_frames - 1, total_frames).long()
-                indices = torch.cat([indices, torch.tensor([total_frames - 1] * (8 - total_frames))])
+                indices = torch.cat(
+                    [
+                        indices,
+                        torch.tensor(
+                            [total_frames - 1] * (self.num_frames - total_frames)
+                        ),
+                    ]
+                )
             else:
-                indices = torch.linspace(0, total_frames - 1, 8).long()
-            
+                indices = torch.linspace(0, total_frames - 1, self.num_frames).long()
+
             frames = []
             for idx in indices:
                 frame = vframes[idx]
                 frame = Image.fromarray(frame.numpy())
                 frame = self.video_transform(frame)
                 frames.append(frame)
-                
+
         except Exception as e:
             print(e)
-            frames = [torch.zeros(3, 224, 224) for _ in range(8)]
-        
-        return torch.stack(frames) # [8, c, h, w]
+            frames = [torch.zeros(3, 224, 224) for _ in range(self.num_frames)]
+
+        return torch.stack(frames)  # [num_frames, c, h, w]
 
     def _load_audio(self, video_path):
         try:
             audio_array, sample_rate = torchaudio.load(str(video_path))
         except (RuntimeError, TypeError):
             # create a small amount of noise instead of pure zeros
-            audio_array = torch.randn(1, 16000) * 1e-4
+            audio_array = torch.randn(1, 16000 * self.t) * 1e-4
             sample_rate = 16000
 
         # convert to mono
@@ -87,36 +85,41 @@ class UCF101Dataset(Dataset):
             resampler = torchaudio.transforms.Resample(sample_rate, 16000)
             audio_array = resampler(audio_array)
 
+        target_length = self.t * 16000
+        if audio_array.shape[1] < target_length:
+            # pad with zeros if audio is too short
+            audio_array = torch.nn.functional.pad(
+                audio_array, (0, target_length - audio_array.shape[1])
+            )
+        else:
+            # trim if audio is too long
+            audio_array = audio_array[:, :target_length]
+
+        # create mel spectrogram
+        # win_length = 0.025 * 16000 = 400 samples (25ms)
+        # hop_length = 0.010 * 16000 = 160 samples (10ms)
         spectogram = torchaudio.transforms.MelSpectrogram(
             sample_rate=16000,
             n_mels=128,
-            win_length=400,
+            n_fft=1024,
+            win_length=1024,
             hop_length=160,
         )(audio_array)
 
         spectogram = torchaudio.transforms.AmplitudeToDB()(spectogram)
+        spectogram = spectogram.squeeze(0)  # remove channel dimension
 
-        # ensure fixed size through interpolation
-        spectogram = torch.nn.functional.interpolate(
-            spectogram.unsqueeze(0),
-            size=(128, 128),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze(0)
+        if spectogram.shape[1] > 400:
+            spectogram = spectogram[:, :400]
+        elif spectogram.shape[1] < 400:
+            spectogram = torch.nn.functional.pad(
+                spectogram, (0, 400 - spectogram.shape[1])
+            )
 
-        # TODO this could be avoided by directly normalizing here
-        spectogram_np = spectogram.numpy()
-        spectogram_np = spectogram_np.squeeze()
-        
-        min_val = spectogram_np.min()
-        max_val = spectogram_np.max()
-        if max_val - min_val < 1e-8: 
-            spectogram_np = np.zeros_like(spectogram_np, dtype=np.uint8)
-        else:
-            spectogram_np = ((spectogram_np - min_val) * (255 / (max_val - min_val))).astype(np.uint8)
-        
-        spectogram_pil = Image.fromarray(spectogram_np, mode='L')
-        return self.audio_transform(spectogram_pil)
+        # mean=0 std=0.5 according to ast
+        spectogram = (spectogram - spectogram.mean()) / (spectogram.std() + 1e-6) * 0.5
+
+        return spectogram.unsqueeze(0)  # add channel dimension back [1, 128, 100*t]
 
     def __getitem__(self, idx):
         video_name = self.video_list[idx]

@@ -38,7 +38,7 @@ def main():
         split="test",
     )
 
-    random_idxs = torch.randperm(len(dataset))
+    random_idxs = torch.randperm(len(dataset))[:10]
 
     for i in random_idxs:
         video, audio, true_label = dataset[i]

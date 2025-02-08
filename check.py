@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
 
+
 def analyze_dataset(data_path, split_path):
     train_file = os.path.join(split_path, "ucfTrainTestlist", "trainlist01.txt")
     test_file = os.path.join(split_path, "ucfTrainTestlist", "testlist01.txt")

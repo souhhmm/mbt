@@ -4,7 +4,7 @@ import timm
 from timm.layers import trunc_normal_
 
 
-# TODO change hardcoded values
+# TODO: change hardcoded values
 class PatchEmbed(nn.Module):
     def __init__(
         self, img_size=(128, 400), patch_size=(16, 16), in_chans=1, embed_dim=768
@@ -20,17 +20,17 @@ class PatchEmbed(nn.Module):
         )
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        assert (
-            H == self.img_size[0] and W == self.img_size[1]
-        ), f"input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})"
+        # B, C, H, W = x.shape
+        # assert (
+        #     H == self.img_size[0] and W == self.img_size[1]
+        # ), f"input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})"
         x = self.proj(x)
         x = x.flatten(2).transpose(1, 2)
         return x
 
 
 class Model(nn.Module):
-    def __init__(self, num_classes=101, lf=10):
+    def __init__(self, num_classes=101, lf=10, num_bottlenecks=4):
         super().__init__()
 
         # set num_classes=0 to remove classification head
@@ -43,7 +43,9 @@ class Model(nn.Module):
         )
 
         # apply ast weights to va
-        ast_weights = torch.load("pretrained_weights/audioset_16_16_0.4422.pth")
+        ast_weights = torch.load(
+            "pretrained_weights/audioset_16_16_0.4422.pth", weights_only=True
+        )
         temp = self.va.state_dict()
         pretrained_dict = {}
         for k, v in ast_weights.items():
@@ -73,13 +75,6 @@ class Model(nn.Module):
             self.va.pos_embed, num_patches_audio
         )
 
-        # create new positional embeddings for fused sequence
-        total_patches = num_patches_video + num_patches_audio + 2
-        self.fused_pos_embed = nn.Parameter(
-            torch.zeros(1, total_patches, self.vv.embed_dim)
-        )
-        trunc_normal_(self.fused_pos_embed, std=0.02)
-
         self.lf = lf
         self.num_features = self.vv.embed_dim
 
@@ -88,6 +83,11 @@ class Model(nn.Module):
             nn.LayerNorm(self.num_features),
             nn.Linear(self.num_features, num_classes),
         )
+
+        # create bottleneck fusion tokens
+        self.num_bottlenecks = num_bottlenecks
+        self.zfsn = nn.Parameter(torch.zeros(1, num_bottlenecks, self.vv.embed_dim))
+        trunc_normal_(self.zfsn, std=0.02)
 
     def interpolate_pos_encoding(self, pos_embed, num_patches):
         pos_embed = pos_embed.float()
@@ -123,8 +123,8 @@ class Model(nn.Module):
         return x
 
     def forward(self, video, audio):
-        B, F, c, h, w = video.shape
-        video = video.view(B * F, c, h, w)
+        B, F, C, H, W = video.shape
+        video = video.view(B * F, C, H, W)
 
         # process separately until fusion layer
         v_features = self.forward_features(video, self.vv, self.lf)
@@ -132,17 +132,30 @@ class Model(nn.Module):
         v_features = torch.mean(v_features, dim=1)
         a_features = self.forward_features(audio, self.va, self.lf)
 
-        fused = torch.cat((v_features, a_features), dim=1)
+        # expand fusion tokens for batch
+        zfsn = self.zfsn.expand(B, -1, -1)
 
-        # add fused positional embeddings after concatenation
-        fused = fused + self.fused_pos_embed
+        # process remaining layers with bottleneck fusion
+        for block in self.vv.blocks[self.lf :]:
+            # eqn 8
+            v_concat = torch.cat([v_features, zfsn], dim=1)
+            a_concat = torch.cat([a_features, zfsn], dim=1)
 
-        # pass through remaining layers
-        for i in range(self.lf, len(self.vv.blocks)):
-            fused = self.vv.blocks[i](fused)
+            v_out = block(v_concat)
+            a_out = block(a_concat)
 
-        v_cls = fused[:, 0]
-        a_cls = fused[:, self.vv.patch_embed.num_patches + 1]
+            # split features and fusion tokens
+            v_features = v_out[:, : v_features.shape[1]]
+            a_features = a_out[:, : a_features.shape[1]]
+            v_zfsn = v_out[:, v_features.shape[1] :]
+            a_zfsn = a_out[:, a_features.shape[1] :]
+
+            # eqn 9
+            zfsn = (v_zfsn + a_zfsn) / 2
+
+        # get CLS tokens
+        v_cls = v_features[:, 0]
+        a_cls = a_features[:, 0]
 
         v_logits = self.classifier(v_cls)
         a_logits = self.classifier(a_cls)

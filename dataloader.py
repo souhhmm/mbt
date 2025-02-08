@@ -18,7 +18,6 @@ class UCF101Dataset(Dataset):
         with open(os.path.join(split_path, split_file), "r") as f:
             self.video_list = [line.strip().split(" ")[0] for line in f.readlines()]
 
-        # TODO add more randomizations
         self.video_transform = transforms.Compose(
             [
                 transforms.Resize((256, 256)),  # slightly larger for random crop
@@ -72,7 +71,7 @@ class UCF101Dataset(Dataset):
 
         return torch.stack(frames)  # [num_frames, c, h, w]
 
-    # TODO specaugment
+    # TODO: specaugment
     def _load_audio(self, video_path):
         try:
             audio_array, sample_rate = torchaudio.load(str(video_path))

@@ -91,7 +91,6 @@ class Model(nn.Module):
 
     def interpolate_pos_encoding(self, pos_embed, num_patches):
         pos_embed = pos_embed.float()
-        N = pos_embed.shape[1] - 1  # original number of patches (excluding CLS token)
 
         # handle CLS token separately
         cls_pos_embed = pos_embed[:, 0:1, :]
